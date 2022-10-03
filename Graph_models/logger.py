@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
-
+from config import train_kwargs
 import os
 import torch
 
@@ -27,19 +27,18 @@ def display_stats(stats):
 
 class Logger:
 
-    def __init__(self):
-        parent_logs_path = '../logs'
-        log_dir = 'gwn'
-        log_dir = os.path.join(parent_logs_path, log_dir)
+    def __init__(self, logdir):
 
-        os.makedirs(log_dir, exist_ok=True)
+        print('|---> Log dir: ', logdir)
+        os.makedirs(logdir, exist_ok=True)
 
-        self.writer = SummaryWriter(log_dir=log_dir)
-        self.log_dir = log_dir
+        self.writer = SummaryWriter(log_dir=logdir)
+
+        self.logdir = logdir
 
         self.min_val_loss = np.inf
         self.patience = 0
-        self.best_model_save_path = os.path.join(log_dir, 'best_model.pth')
+        self.best_model_save_path = os.path.join(logdir, 'best_model.pth')
 
         self.metrics = []
         self.stop = False
@@ -60,7 +59,7 @@ class Logger:
             self.min_val_loss,
             self.patience)
 
-        met_df.round(6).to_csv('{}/train_metrics.csv'.format(self.log_dir))
+        met_df.round(6).to_csv('{}/train_metrics.csv'.format(self.logdir))
 
         self.writer.add_scalar('Loss/Train', m.train_loss, epoch)
         self.writer.add_scalar('Loss/Val', m.val_loss, epoch)

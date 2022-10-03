@@ -49,9 +49,8 @@ class TrafficDataset(Dataset):
         return indices
 
 
-def data_split():
-
-    dataset_path = '../data/GEANT-OD_pair_time_convert.csv'
+def data_split(dataset, **kwargs):
+    dataset_path = '../data/{}.csv'.format(dataset)
     dataset = pd.read_csv(dataset_path, parse_dates=["time"])
     print('Data shape', dataset.shape)
 
@@ -66,10 +65,11 @@ def data_split():
 
     print("dataset_shape_aftersampling:", dataset.shape)
     total_steps = dataset.shape[0]
-    val_size = int(total_steps*0.1)
-    train_size = 8615 - val_size
+    train_size = int(total_steps * 0.7)
+    val_size = int(total_steps * 0.1)
 
-    train_df, val_df, test_df = dataset[0:train_size], dataset[train_size:8615], dataset[8615:]  # total dataset
+    train_df, val_df, test_df = dataset[0:train_size], dataset[train_size:train_size + val_size], \
+                                dataset[train_size + val_size:]  # total dataset
     train_df = pd.DataFrame(train_df)
     val_df = pd.DataFrame(val_df)
     test_df = pd.DataFrame(test_df)
@@ -107,19 +107,19 @@ def data_split():
     test_df_inverse.tail()
 
     # Converting the time series to samples
-    def create_dataset(X, y, time_step=1):
+    def create_dataset(X, y, in_seq_len=12, out_seq_len=1):
         Xs, ys = [], []
-        for i in tqdm(range(len(X) - time_step)):
-            v = X.iloc[i:(i + time_step)].to_numpy()
+        for i in tqdm(range(len(X) - in_seq_len)):
+            v = X.iloc[i:(i + in_seq_len)].to_numpy()
             Xs.append(v)
-            ys.append(y.iloc[i + time_step])
+            ys.append(y.iloc[i + in_seq_len: i + in_seq_len + out_seq_len])
         return np.array(Xs), np.array(ys)
 
-
-    TIME_STEP = 12
-    x_train, y_train = create_dataset(train_df, train_df, TIME_STEP)
-    x_val, y_val = create_dataset(val_df, val_df, TIME_STEP)
-    x_test, y_test = create_dataset(test_df, test_df, TIME_STEP)
+    in_seq_len = kwargs['in_seq_len']
+    out_seq_len = kwargs['out_seq_len']
+    x_train, y_train = create_dataset(train_df, train_df, in_seq_len=in_seq_len, out_seq_len=out_seq_len)
+    x_val, y_val = create_dataset(val_df, val_df, in_seq_len=in_seq_len, out_seq_len=out_seq_len)
+    x_test, y_test = create_dataset(test_df, test_df, in_seq_len=in_seq_len, out_seq_len=out_seq_len)
 
     print("x_train_shape:", x_train.shape)
     # print("x_train:", x_train)
@@ -127,10 +127,14 @@ def data_split():
 
     # y_train = pd.DataFrame(y_train)
     # y_train.tail()
-
-    y_train_inverse_verif = sc.inverse_transform(y_train)
-    y_train_inverse_verif = pd.DataFrame(y_train_inverse_verif)
-    y_train_inverse_verif.tail()
+    # y_train_shape = y_train.shape
+    # if len(y_train.shape) > 2:
+    #     y_train_inverse_verif = sc.inverse_transform(y_train.reshape(-1, y_train.shape[-1]))
+    #     y_train_inverse_verif = y_train_inverse_verif.reshape(y_train_shape)
+    # else:
+    #     y_train_inverse_verif = sc.inverse_transform(y_train)
+    # y_train_inverse_verif = pd.DataFrame(y_train_inverse_verif)
+    # y_train_inverse_verif.tail()
 
     print("x_val_shape:", x_val.shape)
     print("y_val_shape:", y_val.shape)
@@ -138,9 +142,14 @@ def data_split():
     # y_val = pd.DataFrame(y_val)
     # y_val.tail()
 
-    y_val_inverse_verif = sc.inverse_transform(y_val)
-    y_val_inverse_verif = pd.DataFrame(y_val_inverse_verif)
-    y_val_inverse_verif.tail()
+    # y_val_shape = y_val.shape
+    # if len(y_val.shape) > 2:
+    #     y_val_inverse_verif = sc.inverse_transform(y_val.reshape(-1, y_val.shape[-1]))
+    #     y_val_inverse_verif = y_val_inverse_verif.reshape(y_val_shape)
+    # else:
+    #     y_val_inverse_verif = sc.inverse_transform(y_val)
+    # y_val_inverse_verif = pd.DataFrame(y_val_inverse_verif)
+    # y_val_inverse_verif.tail()
 
     print("x_test_shape:", x_test.shape)
     # print("x_test", x_test)
@@ -148,9 +157,14 @@ def data_split():
     # y_test = pd.DataFrame(y_test)
     # y_test.tail()
 
-    y_test_inverse_verif = sc.inverse_transform(y_test)
-    y_test_inverse_verif = pd.DataFrame(y_test_inverse_verif)
-    y_test_inverse_verif.tail()
+    # y_test_shape = y_test.shape
+    # if len(y_test.shape) > 2:
+    #     y_test_inverse_verif = sc.inverse_transform(y_test.reshape(-1, y_test.shape[-1]))
+    #     y_test_inverse_verif = y_test_inverse_verif.reshape(y_test_shape)
+    # else:
+    #     y_test_inverse_verif = sc.inverse_transform(y_test)
+    # y_test_inverse_verif = pd.DataFrame(y_test_inverse_verif)
+    # y_test_inverse_verif.tail()
 
     print("x_train_shape", x_train.shape)
     print("x_val_shape", x_val.shape)
@@ -163,15 +177,15 @@ def data_split():
     return x_train, x_val, x_test, y_train, y_val, y_test, sc
 
 
-def get_dataloader(device):
-    x_train, x_val, x_test, y_train, y_val, y_test, scaler = data_split()
+def get_dataloader(dataset, **kwargs):
+    x_train, x_val, x_test, y_train, y_val, y_test, scaler = data_split(dataset, **kwargs)
 
-    train_set = TrafficDataset(x_train, y_train, scaler, device)
-    val_set = TrafficDataset(x_val, y_val, scaler, device)
-    test_set = TrafficDataset(x_test, y_test, scaler, device)
+    train_set = TrafficDataset(x_train, y_train, scaler, kwargs['device'])
+    val_set = TrafficDataset(x_val, y_val, scaler, kwargs['device'])
+    test_set = TrafficDataset(x_test, y_test, scaler, kwargs['device'])
 
     train_loader = DataLoader(train_set, batch_size=train_kwargs['batch_size'], shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=train_kwargs['batch_size'], shuffle=True)
-    test_loader = DataLoader(test_set, batch_size=train_kwargs['batch_size'], shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=train_kwargs['batch_size'], shuffle=False)
+    test_loader = DataLoader(test_set, batch_size=train_kwargs['batch_size'], shuffle=False)
 
     return train_loader, val_loader, test_loader, scaler

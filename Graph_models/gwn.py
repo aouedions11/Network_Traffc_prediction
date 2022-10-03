@@ -153,7 +153,7 @@ class GWNet(nn.Module):
         x = x.transpose(1, 3)
 
         if self.verbose:
-            print('-------------------GWN model----------------------')
+            print('-------------------Graph_models model----------------------')
             print('Input shape: ', x.shape)
         # x (bs, features, n_nodes, n_timesteps)
         in_len = x.size(3)
