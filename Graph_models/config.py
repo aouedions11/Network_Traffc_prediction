@@ -31,8 +31,8 @@ DATASETS = ['geant', 'sdn', 'abilene']
 MODELS = ['gwn', 'dcrnn', 'lstm']
 
 # -----------------------------------------
-dataset = 1
-model_kwargs['in_seq_len'] = 60
+dataset = 0
+model_kwargs['in_seq_len'] = 24
 cuda_device = 0
 model_id = 1
 is_train = True
