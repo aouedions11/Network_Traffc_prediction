@@ -4,12 +4,10 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 import matplotlib
 
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
-from config import train_kwargs
 import os
 import torch
 

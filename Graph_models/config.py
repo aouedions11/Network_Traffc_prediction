@@ -17,34 +17,43 @@ model_kwargs = {'num_nodes': 23,
                 'cat_feat_gc': False,
                 'verbose': False,
                 'device': 'cuda:0',
-                'model': 'gwn'}
-
-train_kwargs = {'lrate': 1e-4,
+                'model': 'gwn',
+                'batch_size': 64,
+                'lrate': 1e-4,
                 'wdecay': 0.0001,
                 'lr_decay_rate': 0.97,
                 'epochs': 1000,
                 'patience': 50,
-                'batch_size': 64,
                 'logdir': 'gwn',
                 'dataset': 'sdn'}
 
-is_train = True
-DATASETS = ['geant', 'sdn']
-MODELS = ['gwn', 'dcrnn']
+DATASETS = ['geant', 'sdn', 'abilene']
+MODELS = ['gwn', 'dcrnn', 'lstm']
 
 # -----------------------------------------
-train_kwargs['dataset'] = DATASETS[1]
-model_kwargs['in_seq_len'] = 15
-CUDA_DEVICE = 0
+dataset = 1
+model_kwargs['in_seq_len'] = 60
+cuda_device = 0
 model_id = 1
+is_train = True
 # -----------------------------------------
 
+model_kwargs['dataset'] = DATASETS[dataset]
 model_kwargs['model'] = MODELS[model_id]
-train_kwargs['logdir'] = model_kwargs['model']
-model_kwargs['device'] = 'cuda:{}'.format(CUDA_DEVICE)
-if 'sdn' in train_kwargs['dataset']:
+model_kwargs['logdir'] = MODELS[model_id]
+model_kwargs['device'] = 'cuda:{}'.format(cuda_device)
+
+if 'sdn' in model_kwargs['dataset']:
     model_kwargs['num_nodes'] = 14
     model_kwargs['num_flows'] = 196
+elif 'abilene' in model_kwargs['dataset']:
+    model_kwargs['num_nodes'] = 12
+    model_kwargs['num_flows'] = 144
+elif 'geant' in model_kwargs['dataset']:
+    model_kwargs['num_nodes'] = 23
+    model_kwargs['num_flows'] = 529
+else:
+    raise NotImplemented('Dataset is not supported!')
 
 in_seq_len = model_kwargs['in_seq_len']
 
@@ -85,3 +94,4 @@ elif in_seq_len == 60:
     model_kwargs['stride'] = 4
 else:
     raise NotImplemented('Not supported!')
+

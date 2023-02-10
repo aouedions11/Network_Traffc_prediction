@@ -34,18 +34,27 @@ class GraphConvNet(nn.Module):
 
 
 class GWNet(nn.Module):
-    def __init__(self, device, num_nodes, dropout=0.3, supports=None, do_graph_conv=True,
+    def __init__(self, device, num_nodes, num_flows, batch_size, dropout=0.3, supports=None, do_graph_conv=True,
                  addaptadj=True, aptinit=None, in_dim=2, out_seq_len=12,
                  residual_channels=32, dilation_channels=32, cat_feat_gc=False,
                  skip_channels=256, end_channels=512, kernel_size=2, blocks=4, layers=2, stride=2,
                  apt_size=10, verbose=0):
         super().__init__()
+
+        self.residual_channels = residual_channels
+        self.dilation_channels = dilation_channels
+        self.skip_channels = skip_channels
+
         self.dropout = dropout
         self.blocks = blocks
         self.layers = layers
         self.do_graph_conv = do_graph_conv
         self.cat_feat_gc = cat_feat_gc
         self.addaptadj = addaptadj
+
+        self.batch_size = batch_size
+        self.num_flows = num_flows
+
         self.verbose = verbose
 
         if self.cat_feat_gc:
@@ -66,7 +75,7 @@ class GWNet(nn.Module):
         self.supports_len = len(self.fixed_supports)
         if do_graph_conv and addaptadj:
             if aptinit is None:
-                nodevecs = torch.randn(num_nodes, apt_size), torch.randn(apt_size, num_nodes)
+                nodevecs = torch.randn(num_flows, apt_size), torch.randn(apt_size, num_flows)
             else:
                 nodevecs = self.svd_init(apt_size, aptinit)
             self.supports_len += 1
@@ -75,8 +84,8 @@ class GWNet(nn.Module):
         depth = list(range(blocks * layers))
 
         # 1x1 convolution for residual and skip connections (slightly different see docstring)
-        self.residual_convs = ModuleList([Conv1d(dilation_channels, residual_channels, (1, 1)) for _ in depth])
-        self.skip_convs = ModuleList([Conv1d(dilation_channels, skip_channels, (1, 1)) for _ in depth])
+        self.residual_convs = ModuleList([Conv1d(dilation_channels, residual_channels, 1) for _ in depth])
+        self.skip_convs = ModuleList([Conv1d(dilation_channels, skip_channels, 1) for _ in depth])
         self.bn = ModuleList([BatchNorm2d(residual_channels) for _ in depth])
         self.graph_convs = ModuleList(
             [GraphConvNet(dilation_channels, residual_channels, dropout, support_len=self.supports_len)
@@ -90,7 +99,7 @@ class GWNet(nn.Module):
             for i in range(layers):
                 # dilated convolutions
                 self.filter_convs.append(Conv2d(residual_channels, dilation_channels, (1, kernel_size), dilation=D))
-                self.gate_convs.append(Conv1d(residual_channels, dilation_channels, (1, kernel_size), dilation=D))
+                self.gate_convs.append(Conv1d(residual_channels, dilation_channels, kernel_size, dilation=D))
                 D *= stride
                 receptive_field += additional_scope
                 additional_scope *= stride
@@ -124,6 +133,8 @@ class GWNet(nn.Module):
         verbose = kwargs['verbose']
         device = kwargs['device']
         num_nodes = kwargs['num_nodes']
+        num_flows = kwargs['num_flows']
+        batch_size = kwargs['batch_size']
 
         defaults = dict(dropout=dropout, supports=supports,
                         do_graph_conv=do_graph_conv, addaptadj=addaptadj, aptinit=aptinit,
@@ -132,7 +143,8 @@ class GWNet(nn.Module):
                         stride=stride, kernel_size=kernel_size,
                         blocks=blocks, layers=layers,
                         skip_channels=hidden * 8, end_channels=hidden * 16,
-                        cat_feat_gc=cat_feat_gc, verbose=verbose, device=device, num_nodes=num_nodes)
+                        cat_feat_gc=cat_feat_gc, verbose=verbose, device=device,
+                        num_nodes=num_nodes, num_flows=num_flows, batch_size=batch_size)
         # defaults.update(**kwargs)
         model = cls(**defaults)
         return model
@@ -148,12 +160,11 @@ class GWNet(nn.Module):
         self.load_state_dict(cur_state_dict)
 
     def forward(self, x):
-
         # input x (b, seq_x, n, features)
         x = x.transpose(1, 3)
 
         if self.verbose:
-            print('-------------------Graph_models model----------------------')
+            print('------------------- GWN model ----------------------')
             print('Input shape: ', x.shape)
         # x (bs, features, n_nodes, n_timesteps)
         in_len = x.size(3)
@@ -191,7 +202,16 @@ class GWNet(nn.Module):
             residual = x
             # dilated convolution
             filter = torch.tanh(self.filter_convs[i](residual))
-            gate = torch.sigmoid(self.gate_convs[i](residual))
+
+            batch_size = residual.size(0)
+            gate_in = torch.permute(residual, (0, 2, 1, 3))
+            if self.verbose: print('gate_in: ', gate_in.size())
+            gate_in = torch.reshape(gate_in, shape=(batch_size * self.num_flows, self.residual_channels, -1))
+            if self.verbose: print('--> gate_in: ', gate_in.size())
+            gate = torch.sigmoid(self.gate_convs[i](gate_in))
+            gate = torch.reshape(gate, shape=(batch_size, self.num_flows, self.dilation_channels, -1))
+            gate = torch.permute(gate, (0, 2, 1, 3))
+
             x = filter * gate
 
             if self.verbose:
@@ -200,7 +220,13 @@ class GWNet(nn.Module):
                 print('   Gated tcn output: ', x.shape)
 
             # parametrized skip connection
-            s = self.skip_convs[i](x)  # what are we skipping??
+
+            skip_in = torch.permute(x, (0, 2, 1, 3))
+            skip_in = torch.reshape(skip_in, shape=(batch_size * self.num_flows, self.dilation_channels, -1))
+            s = self.skip_convs[i](skip_in)  # what are we skipping??
+            s = torch.reshape(s, shape=(batch_size, self.num_flows, self.skip_channels, -1))
+            s = torch.permute(s, (0, 2, 1, 3))
+
             try:  # if i > 0 this works
                 skip = skip[:, :, :, -s.size(3):]
             except:
@@ -231,4 +257,5 @@ class GWNet(nn.Module):
             print('\nSkip shape: ', skip.shape)
             print('Output shape: ', x.shape)
             print('------------------------------------------------')
+
         return x.squeeze(dim=-1)  # (bs, seq_y, n)

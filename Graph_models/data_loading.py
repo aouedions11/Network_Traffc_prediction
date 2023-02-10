@@ -1,16 +1,17 @@
-import pandas as pd
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from tqdm import tqdm
-from torch.utils.data import Dataset, DataLoader
+import pandas as pd
 import torch
+from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
-from config import train_kwargs
+from config import model_kwargs
 
 
 class TrafficDataset(Dataset):
 
-    def __init__(self, x, y, scaler, device):
+    def __init__(self, model, x, y, scaler, device):
+        self.model = model
         self.device = device
 
         self.x = self.np2torch(x)
@@ -32,8 +33,11 @@ class TrafficDataset(Dataset):
         # x = self.np2torch(x)
         # y = self.np2torch(y)
 
-        if len(x.shape) < 4:
+        if self.model == 'gwn':
             x = torch.unsqueeze(x, -1)
+
+        if self.model == 'lstm':
+            y = torch.squeeze(y, dim=0)
 
         sample = {'x': x, 'y': y}
         return sample
@@ -60,7 +64,6 @@ def data_split(dataset, **kwargs):
     dataset.isnull().sum()
     np.where(np.isnan(dataset))
     dataset.tail()
-
     # Train-test split
 
     print("dataset_shape_aftersampling:", dataset.shape)
@@ -94,17 +97,17 @@ def data_split(dataset, **kwargs):
     train_df.tail()
     test_df.tail()
 
-    train_df_inverse = sc.inverse_transform(train_df)
-    train_df_inverse = pd.DataFrame(train_df_inverse)
-    train_df_inverse.tail()
-
-    val_df_inverse = sc.inverse_transform(val_df)
-    val_df_inverse = pd.DataFrame(val_df_inverse)
-    val_df_inverse.tail()
-
-    test_df_inverse = sc.inverse_transform(test_df)
-    test_df_inverse = pd.DataFrame(test_df_inverse)
-    test_df_inverse.tail()
+    # train_df_inverse = sc.inverse_transform(train_df)
+    # train_df_inverse = pd.DataFrame(train_df_inverse)
+    # train_df_inverse.tail()
+    #
+    # val_df_inverse = sc.inverse_transform(val_df)
+    # val_df_inverse = pd.DataFrame(val_df_inverse)
+    # val_df_inverse.tail()
+    #
+    # test_df_inverse = sc.inverse_transform(test_df)
+    # test_df_inverse = pd.DataFrame(test_df_inverse)
+    # test_df_inverse.tail()
 
     # Converting the time series to samples
     def create_dataset(X, y, in_seq_len=12, out_seq_len=1):
@@ -177,15 +180,60 @@ def data_split(dataset, **kwargs):
     return x_train, x_val, x_test, y_train, y_val, y_test, sc
 
 
+def data_split_abilene(dataset, **kwargs):
+    dataset_path = '../data/abilene_fea.npy'
+    dataset = np.load(dataset_path)
+
+    print("dataset_shape_aftersampling:", dataset.shape)
+    total_steps = dataset.shape[0]
+    train_size = int(total_steps * 0.7)
+    val_size = int(total_steps * 0.1)
+
+    train_df, val_df, test_df = dataset[0:train_size], dataset[train_size:train_size + val_size], \
+                                dataset[train_size + val_size:]  # total dataset
+    sc = MinMaxScaler(feature_range=(0, 1))
+    sc = sc.fit(train_df)
+
+    train_df = sc.transform(train_df)
+    val_df = sc.transform(val_df)
+    test_df = sc.transform(test_df)
+
+    def create_dataset(X, y, in_seq_len=12, out_seq_len=1):
+        Xs, ys = [], []
+        for i in tqdm(range(len(X) - in_seq_len)):
+            v = X[i:(i + in_seq_len)]
+            Xs.append(v)
+            ys.append(y[i + in_seq_len: i + in_seq_len + out_seq_len])
+        return np.array(Xs), np.array(ys)
+
+    in_seq_len = kwargs['in_seq_len']
+    out_seq_len = kwargs['out_seq_len']
+    x_train, y_train = create_dataset(train_df, train_df, in_seq_len=in_seq_len, out_seq_len=out_seq_len)
+    x_val, y_val = create_dataset(val_df, val_df, in_seq_len=in_seq_len, out_seq_len=out_seq_len)
+    x_test, y_test = create_dataset(test_df, test_df, in_seq_len=in_seq_len, out_seq_len=out_seq_len)
+
+    print("x_train_shape", x_train.shape)
+    print("x_val_shape", x_val.shape)
+    print("x_test_shape", x_test.shape)
+    print("y_train", y_train.shape)
+    print("y_val", y_val.shape)
+    print("y_test", y_test.shape)
+    print("n_feature", x_train.shape[2])
+
+    return x_train, x_val, x_test, y_train, y_val, y_test, sc
+
+
 def get_dataloader(dataset, **kwargs):
+    model = kwargs['model']
+
     x_train, x_val, x_test, y_train, y_val, y_test, scaler = data_split(dataset, **kwargs)
 
-    train_set = TrafficDataset(x_train, y_train, scaler, kwargs['device'])
-    val_set = TrafficDataset(x_val, y_val, scaler, kwargs['device'])
-    test_set = TrafficDataset(x_test, y_test, scaler, kwargs['device'])
+    train_set = TrafficDataset(model, x_train, y_train, scaler, kwargs['device'])
+    val_set = TrafficDataset(model, x_val, y_val, scaler, kwargs['device'])
+    test_set = TrafficDataset(model, x_test, y_test, scaler, kwargs['device'])
 
-    train_loader = DataLoader(train_set, batch_size=train_kwargs['batch_size'], shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=train_kwargs['batch_size'], shuffle=False)
-    test_loader = DataLoader(test_set, batch_size=train_kwargs['batch_size'], shuffle=False)
+    train_loader = DataLoader(train_set, batch_size=model_kwargs['batch_size'], shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=model_kwargs['batch_size'], shuffle=False)
+    test_loader = DataLoader(test_set, batch_size=model_kwargs['batch_size'], shuffle=False)
 
     return train_loader, val_loader, test_loader, scaler

@@ -1,27 +1,19 @@
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 import torch.nn
-from keras.layers import LSTM, Bidirectional
-from keras.models import Sequential
-from keras.models import load_model
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow import keras
-from tqdm import tqdm
+# Building Model
+import os
 import time
+
+import torch.nn
 import torch.optim as optim
 from tqdm import trange
-from torch.utils.tensorboard import SummaryWriter
 
-# Building Model
-from keras.layers.core import Dense, Dropout
-import os
+from config import model_kwargs, GRAD_CLIP, is_train
 from data_loading import *
-from gwn import GWNet
-from config import model_kwargs, GRAD_CLIP, train_kwargs, is_train
-from utils import calc_metrics
-from logger import Logger
 from dcrnn import DCRNNModel
+from gwn import GWNet
+from logger import Logger
+from utils import calc_metrics
+from lstm import LSTM
 lossfn = torch.nn.MSELoss()
 
 
@@ -93,23 +85,28 @@ def testing(model, test_loader, out_seq_len, scaler=None):
     if len(yhat.size()) != len(yreal.size()):
         yhat = torch.reshape(yhat, yreal.shape)
 
+    print(yhat.size())
+
     test_met.append([x.item() for x in calc_metrics(yhat, yreal)])
 
     test_met_df = pd.DataFrame(test_met, columns=['rse', 'mae', 'mse', 'mape', 'rmse'])
     return test_met_df, yreal, yhat
 
 
+print(model_kwargs)
+print(model_kwargs)
+
 device = torch.device(model_kwargs['device'])
-dataset = train_kwargs['dataset']
+dataset = model_kwargs['dataset']
 seq_len = model_kwargs['in_seq_len']
 
-train_loader, val_loader, test_loader, scaler = get_dataloader(dataset, **model_kwargs)
+train_loader, val_loader, test_loader, scaler = get_dataloader(**model_kwargs)
 
 aptinit = None
 supports = None
 
 parent_logs_path = '../logs'
-logdir = train_kwargs['logdir']
+logdir = model_kwargs['logdir']
 logdir = logdir + '_data_{}_seq_{}'.format(dataset, seq_len)
 for run in range(0, 5, 1):
     _logdir = os.path.join(parent_logs_path, logdir, 'run_{}'.format(run))
@@ -120,19 +117,23 @@ for run in range(0, 5, 1):
         model = DCRNNModel(adj_mx=m_adj, seq_len=model_kwargs['in_seq_len'],
                            nodes=model_kwargs['num_nodes'],
                            pre_len=model_kwargs['out_seq_len'], device=device)
+    elif 'lstm' in model_kwargs['model']:
+        model = LSTM(in_dim=model_kwargs['num_flows'], hidden_dim=model_kwargs['hidden'], n_layer=3,
+                     seq_len=model_kwargs['in_seq_len'], pre_len=model_kwargs['out_seq_len'])
+
     elif 'gwn' in model_kwargs['model']:
         model = GWNet.from_args(supports, aptinit, **model_kwargs)
     else:
         raise NotImplemented('Model is not supported!')
     model.to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=train_kwargs['lrate'], weight_decay=train_kwargs['wdecay'])
+    optimizer = optim.Adam(model.parameters(), lr=model_kwargs['lrate'], weight_decay=model_kwargs['wdecay'])
     scheduler = optim.lr_scheduler.LambdaLR(
-        optimizer, lr_lambda=lambda epoch: train_kwargs['lr_decay_rate'] ** epoch)
+        optimizer, lr_lambda=lambda epoch: model_kwargs['lr_decay_rate'] ** epoch)
 
     if is_train:
         print('|--- Training {} ---|'.format(run))
-        iterator = trange(train_kwargs['epochs'])
+        iterator = trange(model_kwargs['epochs'])
         tmps_train = time.time()
         for epoch in iterator:
             train_loss, train_rse, train_mae, train_mse, train_mape, train_rmse = [], [], [], [], [], []
@@ -172,7 +173,7 @@ for run in range(0, 5, 1):
                      val_mae=np.mean(val_mae), val_mse=np.mean(val_mse),
                      val_mape=np.mean(val_mape), val_rmse=np.mean(val_rmse))
 
-            description = logger.summary(m, model, epoch, train_kwargs['patience'])
+            description = logger.summary(m, model, epoch, model_kwargs['patience'])
 
             if logger.stop:
                 break
@@ -187,7 +188,7 @@ for run in range(0, 5, 1):
 
     print('|--- Testing {} ---|'.format(run))
     with torch.no_grad():
-        test_met_df, yreal, yhat = testing(model, test_loader, out_seq_len=1, scaler=None)
+        test_met_df, yreal, yhat = testing(model, test_loader, out_seq_len=model_kwargs['out_seq_len'], scaler=None)
 
     test_met_df.to_csv(os.path.join(logger.logdir, 'test_metrics.csv'))
     np.save(os.path.join(logger.logdir, 'y_real_data'), yreal.detach().cpu().numpy())
